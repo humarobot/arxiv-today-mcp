@@ -22,7 +22,7 @@ dependencies = [
 arxiv-today-mcp = "arxiv_mcp_server.__main__:main"
 
 [project.urls]
-Homepage = "https://github.com/humarobot/arxiv-mcp-server"
+Homepage = "https://github.com/humarobot/arxiv-today-mcp"
 
 [tool.uv.build-backend]
 module-name = "arxiv_mcp_server"
