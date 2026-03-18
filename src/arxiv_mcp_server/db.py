@@ -124,6 +124,40 @@ class ArxivDatabase:
             cursor.execute(sql, params)
             return [self.convert_to_paper(row) for row in cursor.fetchall()]
 
+    def delete_papers(
+        self,
+        before_date: Optional[str] = None,
+        date: Optional[str] = None,
+        categories: Optional[List[str]] = None,
+    ) -> int:
+        conditions = []
+        params: List[Any] = []
+
+        if before_date:
+            conditions.append("DATE(published) < ?")
+            params.append(before_date)
+
+        if date:
+            conditions.append("DATE(published) = ?")
+            params.append(date)
+
+        if categories:
+            cat_clauses = ["categories LIKE ? ESCAPE '\\'" for _ in categories]
+            conditions.append("(" + " OR ".join(cat_clauses) + ")")
+            params.extend(f'%"{self._escape_like(c)}"%' for c in categories)
+
+        if not conditions:
+            raise ValueError("At least one filter must be provided")
+
+        where = "WHERE " + " AND ".join(conditions)
+        sql = f"DELETE FROM papers {where}"
+
+        with sqlite3.connect(self.database_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(sql, params)
+            conn.commit()
+            return cursor.rowcount
+
     def get_enhanced_stats(self, top_n_categories: int = 20) -> EnhancedStats:
         with sqlite3.connect(self.database_path) as conn:
             cursor = conn.cursor()

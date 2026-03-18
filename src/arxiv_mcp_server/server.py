@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import sys
 from typing import List, Optional
 
@@ -155,6 +156,48 @@ def query_papers(
         ensure_ascii=False,
         indent=2,
     )
+
+
+@mcp.tool()
+def cleanup_papers(
+    before_date: Optional[str] = None,
+    date: Optional[str] = None,
+    categories: Optional[List[str]] = None,
+) -> str:
+    """Delete papers from the local database by date and/or category.
+
+    At least one filter must be provided to prevent accidental full deletion.
+    Filters are combined with AND logic.
+
+    Args:
+        before_date: Delete papers published before this date (exclusive), e.g. "2026-03-01"
+        date: Delete papers published on this specific date, e.g. "2026-03-18"
+        categories: Delete only papers in these categories (OR logic), e.g. ["cs.AI", "cs.LG"]
+    """
+    if not before_date and not date and not categories:
+        return json.dumps(
+            {"error": "At least one filter (before_date, date, categories) must be provided."},
+            ensure_ascii=False,
+            indent=2,
+        )
+    if before_date and date:
+        return json.dumps(
+            {"error": "before_date and date are mutually exclusive; provide only one."},
+            ensure_ascii=False,
+            indent=2,
+        )
+    date_re = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+    for field_name, value in (("before_date", before_date), ("date", date)):
+        if value and not date_re.match(value):
+            return json.dumps(
+                {"error": f"Invalid {field_name} format: {value!r}. Expected YYYY-MM-DD."},
+                ensure_ascii=False,
+                indent=2,
+            )
+    logger.info(f"Deleting papers: before_date={before_date!r}, date={date!r}, categories={categories}")
+    db = _get_db()
+    deleted = db.delete_papers(before_date=before_date, date=date, categories=categories)
+    return json.dumps({"status": "ok", "deleted": deleted}, ensure_ascii=False, indent=2)
 
 
 @mcp.tool()
