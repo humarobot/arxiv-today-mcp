@@ -1,8 +1,7 @@
 import json
 import logging
 import sys
-from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
@@ -20,22 +19,31 @@ logger = logging.getLogger(__name__)
 
 mcp = FastMCP("arxiv")
 
+VALID_FIELDS = {"entry_id", "title", "authors", "abstract", "url", "published", "updated", "categories"}
+DEFAULT_FIELDS = ["entry_id", "title", "authors", "published", "url"]
+
 
 def _get_db() -> ArxivDatabase:
     DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
     return ArxivDatabase(str(DATABASE_PATH))
 
 
-def _paper_title_entry(paper) -> dict:
-    """Return lightweight title-only dict for a paper."""
-    return {
-        "entry_id": paper.entry_id,
-        "title": paper.title,
-        "authors": paper.authors[:3],  # first 3 authors only
-        "categories": paper.categories,
-        "published": paper.published.date().isoformat(),
-        "url": paper.entry_id,
-    }
+def _build_paper_dict(paper, fields: List[str]) -> dict:
+    result = {}
+    for f in fields:
+        if f == "abstract":
+            result["abstract"] = paper.summary
+        elif f == "url":
+            result["url"] = paper.entry_id
+        elif f == "authors":
+            result["authors"] = paper.authors[:3]
+        elif f == "published":
+            result["published"] = paper.published.date().isoformat()
+        elif f == "updated":
+            result["updated"] = paper.updated.date().isoformat()
+        else:
+            result[f] = getattr(paper, f)
+    return result
 
 
 @mcp.tool()
@@ -43,9 +51,6 @@ def fetch_papers(
     category: str, num_days: int = 3, max_results: int = 100
 ) -> str:
     """Fetch recent papers from arXiv API and store them in the local database.
-
-    Returns only paper titles (not abstracts) to save context.
-    Use get_paper_details() to retrieve abstracts for specific papers.
 
     Args:
         category: arXiv category (e.g. "cs.AI", "cs.CL", "stat.ML")
@@ -64,7 +69,6 @@ def fetch_papers(
             "category": category,
             "num_days": num_days,
             "papers_fetched": len(papers),
-            "papers": [_paper_title_entry(p) for p in papers],
         },
         ensure_ascii=False,
         indent=2,
@@ -97,83 +101,55 @@ def count_papers_on_date(category: str, date: str) -> str:
 
 
 @mcp.tool()
-def list_papers(date: str = "", max_results: int = 100) -> str:
-    """List paper titles from the local database, optionally filtered by date.
+def query_papers(
+    date: Optional[str] = None,
+    categories: Optional[List[str]] = None,
+    title: Optional[str] = None,
+    entry_ids: Optional[List[str]] = None,
+    fields: Optional[List[str]] = None,
+    max_results: int = 500,
+) -> str:
+    """Query papers from the local database with flexible filtering and field selection.
 
-    Returns only titles and metadata (no abstracts) to save context.
-    Use get_paper_details() to retrieve abstracts for papers of interest.
+    All filter parameters are combined with AND logic. Within categories, OR logic is used.
+    If no filter parameters are provided, returns the most recent papers up to max_results.
 
     Args:
-        date: Filter by publication date in YYYY-MM-DD format (e.g. "2024-01-15").
-              Leave empty to list all stored papers.
-        max_results: Maximum number of results to return (default: 100)
+        date: Filter by publication date in YYYY-MM-DD format (e.g. "2026-03-18")
+        categories: Filter by one or more arXiv categories (OR logic), e.g. ["cs.AI", "cs.LG"]
+        title: Filter by title keyword (title field only, not abstract; case-insensitive for ASCII)
+        entry_ids: Fetch specific papers by their arXiv entry IDs. Typically used alone;
+                   combining with other filters applies AND logic and may return fewer results
+                   than expected if the other conditions do not match.
+        fields: Fields to return. Valid: entry_id, title, authors, abstract, url, published, updated, categories.
+                Defaults to: entry_id, title, authors, published, url
+        max_results: Maximum number of results to return (default: 500)
     """
-    logger.info(f"Listing papers: date={date!r}, max={max_results}")
+    active_fields = fields if fields is not None else DEFAULT_FIELDS
+
+    invalid = [f for f in active_fields if f not in VALID_FIELDS]
+    if invalid:
+        return json.dumps(
+            {"error": f"Invalid field(s): {invalid}. Valid fields: {sorted(VALID_FIELDS)}"},
+            ensure_ascii=False,
+        )
+
+    logger.info(
+        f"Querying papers: date={date!r}, categories={categories}, "
+        f"title={title!r}, entry_ids={entry_ids}, fields={active_fields}, max={max_results}"
+    )
     db = _get_db()
-
-    if date:
-        published_after = datetime.fromisoformat(date)
-        papers = db.get_papers(published_after=published_after)
-        # Also filter to same day
-        papers = [p for p in papers if p.published.date().isoformat() == date]
-    else:
-        papers = db.get_papers()
-
-    papers = papers[:max_results]
+    papers = db.query_papers(
+        date=date,
+        categories=categories,
+        title=title,
+        entry_ids=entry_ids,
+        max_results=max_results,
+    )
     return json.dumps(
         {
             "total": len(papers),
-            "papers": [_paper_title_entry(p) for p in papers],
-        },
-        ensure_ascii=False,
-        indent=2,
-    )
-
-
-@mcp.tool()
-def search_papers(query: str, max_results: int = 100) -> str:
-    """Search for papers in the local database by keyword.
-
-    Performs case-insensitive search against titles and abstracts,
-    but returns only titles (no abstracts) to save context.
-    Use get_paper_details() to retrieve abstracts for matched papers.
-
-    Args:
-        query: Search keyword or phrase
-        max_results: Maximum number of results to return (default: 100)
-    """
-    logger.info(f"Searching papers: query={query!r}, max={max_results}")
-    db = _get_db()
-    papers = db.search_papers(query)[:max_results]
-    return json.dumps(
-        {
-            "query": query,
-            "total_results": len(papers),
-            "papers": [_paper_title_entry(p) for p in papers],
-        },
-        ensure_ascii=False,
-        indent=2,
-    )
-
-
-@mcp.tool()
-def get_paper_details(entry_ids: List[str]) -> str:
-    """Get full details including abstracts for specific papers by their entry IDs.
-
-    Use this after list_papers or search_papers when the user wants to know
-    more about specific papers. Pass the entry_id values from previous results.
-
-    Args:
-        entry_ids: List of arXiv entry IDs (e.g. ["http://arxiv.org/abs/2401.12345v1"])
-    """
-    logger.info(f"Getting details for {len(entry_ids)} papers")
-    db = _get_db()
-    matched = db.get_papers_by_ids(entry_ids)
-
-    return json.dumps(
-        {
-            "total": len(matched),
-            "papers": [p.model_dump(mode="json") for p in matched],
+            "papers": [_build_paper_dict(p, active_fields) for p in papers],
         },
         ensure_ascii=False,
         indent=2,
@@ -184,16 +160,9 @@ def get_paper_details(entry_ids: List[str]) -> str:
 def get_stats() -> str:
     """Get statistics about papers stored in the local database.
 
-    Returns the count of papers grouped by publication date.
+    Returns total count, date range, per-date breakdown, and top categories.
     """
     logger.info("Getting stats")
     db = _get_db()
-    stats = db.get_stats()
-    return json.dumps(
-        {
-            "total_papers": sum(s.count for s in stats),
-            "by_date": [s.model_dump() for s in stats],
-        },
-        ensure_ascii=False,
-        indent=2,
-    )
+    stats = db.get_enhanced_stats()
+    return json.dumps(stats.model_dump(), ensure_ascii=False, indent=2)

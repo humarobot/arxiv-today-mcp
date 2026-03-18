@@ -58,8 +58,8 @@ wheels = [
 ]
 
 [[package]]
-name = "arxiv-mcp-server"
-version = "0.1.0"
+name = "arxiv-today-mcp"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "appdirs" },
