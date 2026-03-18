@@ -48,31 +48,32 @@ def _build_paper_dict(paper, fields: List[str]) -> dict:
 
 @mcp.tool()
 def fetch_papers(
-    category: str, num_days: int = 3, max_results: int = 100
+    category: str, date: Optional[str] = None, num_days: int = 3, max_results: int = 100
 ) -> str:
     """Fetch recent papers from arXiv API and store them in the local database.
 
+    Returns only fetched paper titles (not abstracts) to save context.
+    Use get_paper_details() to retrieve abstracts for specific papers.
+
     Args:
         category: arXiv category (e.g. "cs.AI", "cs.CL", "stat.ML")
-        num_days: Number of days to look back (default: 3)
+        date: Fetch papers published on a specific date in YYYY-MM-DD format.
+              When provided, takes priority over num_days.
+        num_days: Number of days to look back (default: 3). Ignored when date is set.
         max_results: Maximum number of papers to fetch (default: 100)
     """
     logger.info(
-        f"Fetching papers: category={category}, days={num_days}, max={max_results}"
+        f"Fetching papers: category={category}, date={date}, days={num_days}, max={max_results}"
     )
-    papers = download_papers(category, num_days, max_results)
+    papers = download_papers(category, num_days, max_results, date=date)
     db = _get_db()
     db.save_papers(papers)
-    return json.dumps(
-        {
-            "status": "ok",
-            "category": category,
-            "num_days": num_days,
-            "papers_fetched": len(papers),
-        },
-        ensure_ascii=False,
-        indent=2,
-    )
+    result: dict = {"status": "ok", "category": category, "papers_fetched": len(papers)}
+    if date is not None:
+        result["date"] = date
+    else:
+        result["num_days"] = num_days
+    return json.dumps(result, ensure_ascii=False, indent=2)
 
 
 @mcp.tool()
