@@ -1,13 +1,14 @@
 import json
 import logging
 import sys
+from datetime import datetime
 from typing import List
 
 from mcp.server.fastmcp import FastMCP
 
 from arxiv_mcp_server.config import DATABASE_PATH
 from arxiv_mcp_server.db import ArxivDatabase
-from arxiv_mcp_server.fetch import download_papers
+from arxiv_mcp_server.fetch import count_papers, download_papers
 
 # Configure logging to stderr so stdout stays clean for stdio transport
 logging.basicConfig(
@@ -71,6 +72,31 @@ def fetch_papers(
 
 
 @mcp.tool()
+def count_papers_on_date(category: str, date: str) -> str:
+    """Count how many papers were published in an arXiv category on a specific date.
+
+    Use this before fetch_papers to check the volume of papers for a given day,
+    so you can decide how many to fetch with fetch_papers(max_results=N).
+
+    Args:
+        category: arXiv category (e.g. "cs.AI", "cs.CL", "stat.ML")
+        date: Date in YYYY-MM-DD format (e.g. "2026-03-18")
+    """
+    logger.info(f"Counting papers: category={category}, date={date}")
+    count = count_papers(category, date)
+    return json.dumps(
+        {
+            "category": category,
+            "date": date,
+            "count": count,
+            "suggestion": f"Use fetch_papers(category='{category}', num_days=1, max_results={count}) to fetch them all.",
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+@mcp.tool()
 def list_papers(date: str = "", max_results: int = 100) -> str:
     """List paper titles from the local database, optionally filtered by date.
 
@@ -86,7 +112,6 @@ def list_papers(date: str = "", max_results: int = 100) -> str:
     db = _get_db()
 
     if date:
-        from datetime import datetime
         published_after = datetime.fromisoformat(date)
         papers = db.get_papers(published_after=published_after)
         # Also filter to same day
@@ -143,9 +168,7 @@ def get_paper_details(entry_ids: List[str]) -> str:
     """
     logger.info(f"Getting details for {len(entry_ids)} papers")
     db = _get_db()
-    all_papers = db.get_papers()
-    id_set = set(entry_ids)
-    matched = [p for p in all_papers if p.entry_id in id_set]
+    matched = db.get_papers_by_ids(entry_ids)
 
     return json.dumps(
         {

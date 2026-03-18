@@ -1,3 +1,4 @@
+import json
 import logging
 import sqlite3
 from datetime import datetime
@@ -39,68 +40,38 @@ class ArxivDatabase:
             published=datetime.fromisoformat(row[2]),
             title=row[3],
             summary=row[4],
-            authors=row[5].split(","),
-            categories=row[6].split(","),
+            authors=json.loads(row[5]),
+            categories=json.loads(row[6]),
             viewed=(row[7] == 1),
         )
 
     def save_papers(self, papers: List[ArxivPaper]):
         with sqlite3.connect(self.database_path) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT entry_id FROM papers")
-            existing_ids = set(row[0] for row in cursor.fetchall())
-
-            num_inserted = 0
-            num_updated = 0
-            for paper in papers:
-                if paper.entry_id in existing_ids:
-                    cursor.execute(
-                        """
-                        UPDATE papers SET
-                            updated=?,
-                            published=?,
-                            title=?,
-                            summary=?,
-                            authors=?,
-                            categories=?
-                        WHERE entry_id=?
-                    """,
-                        (
-                            paper.updated.isoformat(),
-                            paper.published.isoformat(),
-                            paper.title,
-                            paper.summary,
-                            ",".join(paper.authors),
-                            ",".join(paper.categories),
-                            paper.entry_id,
-                        ),
+            cursor.executemany(
+                """
+                INSERT OR REPLACE INTO papers (
+                    entry_id, updated, published, title, summary,
+                    authors, categories, viewed
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+                [
+                    (
+                        paper.entry_id,
+                        paper.updated.isoformat(),
+                        paper.published.isoformat(),
+                        paper.title,
+                        paper.summary,
+                        json.dumps(paper.authors),
+                        json.dumps(paper.categories),
+                        0,
                     )
-                    num_updated += 1
-                else:
-                    cursor.execute(
-                        """
-                        INSERT INTO papers (
-                            entry_id, updated, published, title, summary,
-                            authors, categories, viewed
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                        (
-                            paper.entry_id,
-                            paper.updated.isoformat(),
-                            paper.published.isoformat(),
-                            paper.title,
-                            paper.summary,
-                            ",".join(paper.authors),
-                            ",".join(paper.categories),
-                            0,
-                        ),
-                    )
-                    num_inserted += 1
-
+                    for paper in papers
+                ],
+            )
             conn.commit()
 
-        logging.info(f"Inserted {num_inserted} papers")
-        logging.info(f"Updated {num_updated} papers")
+        logging.info(f"Saved {len(papers)} papers")
 
     def get_papers(
         self, published_after: Optional[datetime] = None
@@ -114,7 +85,7 @@ class ArxivDatabase:
                            authors, categories, viewed
                     FROM papers
                     WHERE published >= ?
-                    ORDER BY published ASC
+                    ORDER BY published DESC
                 """,
                     (published_after.isoformat(),),
                 )
@@ -124,7 +95,7 @@ class ArxivDatabase:
                     SELECT entry_id, updated, published, title, summary,
                            authors, categories, viewed
                     FROM papers
-                    ORDER BY published ASC
+                    ORDER BY published DESC
                 """
                 )
 
@@ -133,6 +104,23 @@ class ArxivDatabase:
                 papers.append(self.convert_to_paper(row))
 
         return papers
+
+    def get_papers_by_ids(self, entry_ids: List[str]) -> List[ArxivPaper]:
+        if not entry_ids:
+            return []
+        placeholders = ",".join("?" for _ in entry_ids)
+        with sqlite3.connect(self.database_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT entry_id, updated, published, title, summary,
+                       authors, categories, viewed
+                FROM papers
+                WHERE entry_id IN ({placeholders})
+            """,
+                entry_ids,
+            )
+            return [self.convert_to_paper(row) for row in cursor.fetchall()]
 
     def search_papers(self, query: str) -> List[ArxivPaper]:
         with sqlite3.connect(self.database_path) as conn:
@@ -143,7 +131,7 @@ class ArxivDatabase:
                        authors, categories, viewed
                 FROM papers
                 WHERE title LIKE ? OR summary LIKE ?
-                ORDER BY published ASC
+                ORDER BY published DESC
             """,
                 (f"%{query}%", f"%{query}%"),
             )
