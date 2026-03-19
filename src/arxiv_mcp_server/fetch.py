@@ -7,7 +7,7 @@ from arxiv import Client, Search, SortCriterion, SortOrder
 from arxiv_mcp_server.models import ArxivPaper
 
 
-def count_papers(category: str, date: str) -> int:
+def count_papers(category: str, date: str, max_results: int = 500) -> int:
     """Count papers published on a specific date via the arXiv API.
 
     Uses date range in the query to avoid scanning unrelated papers.
@@ -15,12 +15,12 @@ def count_papers(category: str, date: str) -> int:
     Args:
         category: arXiv category (e.g. "cs.AI", "cs.CL")
         date: Date string in YYYY-MM-DD format
+        max_results: Maximum number of papers to count (default: 500)
 
     Returns:
-        Number of papers published on that date.
+        Number of papers published on that date (capped at max_results).
     """
     target_date = datetime.fromisoformat(date).date()
-    # Use next day as exclusive upper bound
     next_date = target_date + timedelta(days=1)
     date_str = target_date.strftime("%Y%m%d")
     next_str = next_date.strftime("%Y%m%d")
@@ -32,7 +32,11 @@ def count_papers(category: str, date: str) -> int:
     )
 
     client = Client()
-    count = sum(1 for _ in client.results(search))
+    count = 0
+    for _ in client.results(search):
+        count += 1
+        if count >= max_results:
+            break
     return count
 
 
@@ -55,7 +59,9 @@ def download_papers(
         end_date = datetime.combine(current_date, datetime.max.time()).replace(
             tzinfo=timezone.utc
         )
-        query = f"cat:{category}"
+        start_str = start_date.strftime("%Y%m%d")
+        end_str = (current_date + timedelta(days=1)).strftime("%Y%m%d")
+        query = f"cat:{category} AND submittedDate:[{start_str}0000 TO {end_str}0000]"
 
     search = Search(
         query=query,

@@ -100,8 +100,8 @@ class ArxivDatabase:
             params.extend(f'%"{self._escape_like(c)}"%' for c in categories)
 
         if title:
-            conditions.append("title LIKE ?")
-            params.append(f"%{title}%")
+            conditions.append("title LIKE ? ESCAPE '\\'")
+            params.append(f"%{self._escape_like(title)}%")
 
         if entry_ids:
             placeholders = ",".join("?" for _ in entry_ids)

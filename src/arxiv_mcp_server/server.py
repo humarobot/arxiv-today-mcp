@@ -54,7 +54,7 @@ def fetch_papers(
     """Fetch recent papers from arXiv API and store them in the local database.
 
     Returns only fetched paper titles (not abstracts) to save context.
-    Use get_paper_details() to retrieve abstracts for specific papers.
+    Use query_papers(entry_ids=[...], fields=["abstract"]) to retrieve abstracts for specific papers.
 
     Args:
         category: arXiv category (e.g. "cs.AI", "cs.CL", "stat.ML")
@@ -134,6 +134,14 @@ def query_papers(
         return json.dumps(
             {"error": f"Invalid field(s): {invalid}. Valid fields: {sorted(VALID_FIELDS)}"},
             ensure_ascii=False,
+        )
+
+    date_re = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+    if date and not date_re.match(date):
+        return json.dumps(
+            {"error": f"Invalid date format: {date!r}. Expected YYYY-MM-DD."},
+            ensure_ascii=False,
+            indent=2,
         )
 
     logger.info(
